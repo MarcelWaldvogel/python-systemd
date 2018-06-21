@@ -41,14 +41,18 @@
 #  define HAVE_PID_NOTIFY_WITH_FDS
 #endif
 
+#if LIBSYSTEMD_VERSION >= 227
+#  define HAVE_SD_LISTEN_FDS_WITH_NAMES
+#endif
+
 #if LIBSYSTEMD_VERSION >= 233
 #  define HAVE_IS_SOCKET_SOCKADDR
 #endif
 
 PyDoc_STRVAR(module__doc__,
         "Python interface to the libsystemd-daemon library.\n\n"
-        "Provides _listen_fds, notify, booted, and is_* functions\n"
-        "which wrap sd_listen_fds, sd_notify, sd_booted, sd_is_* and\n"
+        "Provides _listen_fds*, notify, booted, and is_* functions\n"
+        "which wrap sd_listen_fds*, sd_notify, sd_booted, sd_is_* and\n"
         "useful for socket activation and checking if the system is\n"
         "running under systemd."
 );
@@ -203,6 +207,64 @@ static PyObject* listen_fds(PyObject *self, PyObject *args, PyObject *keywds) {
 
         return long_FromLong(r);
 }
+
+#if HAVE_LISTEN_FDS_WITH_NAMES
+PyDoc_STRVAR(listen_fds_with_names__doc__,
+             "_listen_fds_with_names(unset_environment=True) -> (int, str...)\n\n"
+             "Return the number of descriptors passed to this process by the init system\n"
+             "and their names as part of the socket-based activation logic.\n"
+             "Wraps sd_listen_fds_with_names(3)."
+);
+
+static PyObject* listen_fds_with_names(PyObject *self, PyObject *args, PyObject *keywds) {
+        int r;
+        int unset = true;
+	char **names;
+	PyObject *tpl, *obj;
+
+        static const char* const kwlist[] = {"unset_environment", NULL};
+#if PY_MAJOR_VERSION >=3 && PY_MINOR_VERSION >= 3
+        if (!PyArg_ParseTupleAndKeywords(args, keywds, "|p:_listen_fds",
+                                         (char**) kwlist, &unset))
+                return NULL;
+#else
+        PyObject *obj = NULL;
+        if (!PyArg_ParseTupleAndKeywords(args, keywds, "|O:_listen_fds",
+                                         (char**) kwlist, &obj))
+                return NULL;
+        if (obj != NULL)
+                unset = PyObject_IsTrue(obj);
+        if (unset < 0)
+                return NULL;
+#endif
+
+        r = sd_listen_fds_with_names(unset, &names);
+        if (set_error(r, NULL, NULL) < 0)
+                return NULL;
+
+	tpl = PyTuple_New(r+1);
+	if (tpl == NULL)
+		return NULL;
+
+	obj = Pylong_FromLong(r);
+	if (obj == NULL) {
+		Py_DECREF(tpl);
+		return NULL;
+	}
+	if (PyTuple_SetItem(tpl, 0, obj) < 0) {
+		Py_DECREF(tpl);
+		return NULL;
+	}
+	for (int i = 0; i < r && names[i] != NULL; i++) {
+		obj = PyUnicode_FromString(names[r]);
+		if (PyTuble_SetItem(tpl, 0, obj) < 0) {
+			Py_DECREF(tpl);
+			return NULL;
+		}
+	}
+        return tpl;
+}
+#endif /* HAVE_LISTEN_FDS_WITH_NAMES */
 
 PyDoc_STRVAR(is_fifo__doc__,
              "_is_fifo(fd, path) -> bool\n\n"
@@ -411,6 +473,10 @@ static PyMethodDef methods[] = {
         { "booted", booted, METH_NOARGS, booted__doc__},
         { "notify", (PyCFunction) notify, METH_VARARGS | METH_KEYWORDS, notify__doc__},
         { "_listen_fds", (PyCFunction) listen_fds, METH_VARARGS | METH_KEYWORDS, listen_fds__doc__},
+#if HAVE_LISTEN_FDS_WITH_NAMES
+        { "_listen_fds_with_names", (PyCFunction) listen_fds_with_names,
+                METH_VARARGS | METH_KEYWORDS, listen_fds_with_names__doc__},
+#endif
         { "_is_fifo", is_fifo, METH_VARARGS, is_fifo__doc__},
         { "_is_mq", is_mq, METH_VARARGS, is_mq__doc__},
         { "_is_socket", is_socket, METH_VARARGS, is_socket__doc__},
